@@ -1,16 +1,12 @@
-import pandas as pd
 import re
-import nltk
+import pandas as pd
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
-from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
-from textblob import TextBlob
+from sklearn.model_selection import train_test_split, GridSearchCV
+
 
 # Download NLTK data files (first-time only)
 # nltk.download('stopwords')
@@ -44,39 +40,45 @@ if __name__ == "__main__":
     stop_words = set(stopwords.words('english'))
 
     df['cleaned_review'] = df['review'].apply(preprocess_text)     # Preprocess text and save to new column
+    # df['polarity'] = df['cleaned_review'].apply(lambda x: TextBlob(x).sentiment.polarity)
+    # df['subjectivity'] = df['cleaned_review'].apply(lambda x: TextBlob(x).sentiment.subjectivity)
+
+
+
 
     # Convert text to numerical features using TF-IDF
-    vectorizer = TfidfVectorizer(max_features=10000)        # Limit to top x features
+    vectorizer = TfidfVectorizer(ngram_range=(1, 2), max_features=10000)        # Limit to top x features
     X = vectorizer.fit_transform(df['cleaned_review']).toarray()
-
-    # Standardize the features (PCA works better when data is standardized)
-    scaler = StandardScaler(with_mean=False)  # with_mean=False to handle sparse data
-    X_scaled = scaler.fit_transform(X)
-    # Apply PCA to reduce the dimensionality
-    pca = PCA(n_components=0.99)  # Retain 95% of variance, or you can specify a fixed number like n_components=300
-    X_reduced = pca.fit_transform(X_scaled)
+    # X_combined = np.hstack((X, df[['polarity', 'subjectivity']].values))
 
     y = df['sentiment'].map({'positive': 1, 'negative': 0})
-
     print("Original shape:", X.shape)
-    print("Reduced shape:", X_reduced.shape)
+
 
     # Split data to training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    X_reduced_train, X_reduced_test, y_reduced_train, y_reduced_test = train_test_split(X_reduced, y, test_size=0.2, random_state=42)
+    del X, y, df
+
+    param_grid = {
+        'C': [0.1, 1, 10],  # Regularization strength
+        'solver': ['liblinear']
+    }
+
+    grid_search = GridSearchCV(LogisticRegression(random_state=42), param_grid, cv=3, verbose=1, n_jobs=-1)
+    grid_search.fit(X_train, y_train)
+    lr_best_params = grid_search.best_params_
+    print("Best parameters for Logistic Regression: ", lr_best_params)
 
 
-    model = LogisticRegression()
+    model = LogisticRegression(
+        C=lr_best_params['C'],
+        solver=lr_best_params['solver'],
+        random_state=42)
     model.fit(X_train, y_train)                     # Train a logistic regression model
     y_pred = model.predict(X_test)                  # Make predictions
 
-    model.fit(X_reduced_train, y_reduced_train)
-    y_reduced_pred = model.predict(X_reduced_test)
 
     # Evaluate the model
     print("Accuracy LR:", accuracy_score(y_test, y_pred))
-    print("Accuracy RF:", accuracy_score(y_reduced_test, y_reduced_pred))
     print("Confusion Matrix LR:\n", confusion_matrix(y_test, y_pred))
-    print("Confusion Matrix RF:\n", confusion_matrix(y_reduced_test, y_reduced_pred))
     print("Classification Report LR:\n", classification_report(y_test, y_pred))
-    print("Classification Report RF:\n", classification_report(y_reduced_test, y_reduced_pred))
